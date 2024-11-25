@@ -96,6 +96,7 @@ T = np.zeros_like(Psi)
 for j in range(M):
     C_theta = rC[j, :] / r[j]
     V_squared = Cx**2 + Cr**2 + C_theta**2
+    H0 = 0
     T = (H0_inlet / cp) - (V_squared / (2 * cp))
 
 # Calculate vorticity ω for each node based on the formula provided
