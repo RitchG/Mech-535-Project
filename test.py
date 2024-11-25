@@ -34,10 +34,14 @@ def initialize_variables(rho_inlet, T_inlet, Cp, Cx_inlet, X, R):
     Psi = (R**2 - 0.9**2) / (1.0**2 - 0.9**2)
     rho = np.full_like(Psi, rho_inlet)
     m_dot = rho_inlet * Cx_inlet * np.pi * (1.0**2 - 0.9**2)
-    H0_inlet = Cp * T_inlet + 0.5 * Cx_inlet**2
-    return Psi, rho, m_dot, H0_inlet
+    
+    T = np.full_like(Psi, T_inlet)
 
-Psi, rho, m_dot, H0_inlet = initialize_variables(rho_inlet, T_inlet, Cp, Cx_inlet, X, R)
+    H0_inlet = Cp * T_inlet + 0.5 * Cx_inlet**2
+    H0 = np.full_like(Psi, rho_inlet)
+    return Psi, rho, m_dot, H0, T, H0_inlet
+
+Psi_initial, rho, m_dot, H0, T, H0_inlet = initialize_variables(rho_inlet, T_inlet, Cp, Cx_inlet, X, R)
 
 # Swirl Distribution
 def start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi):
@@ -68,27 +72,29 @@ def start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi):
 
     return rC
 
-rC_theta = start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi)
+rC_theta = start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi_initial)
 C_theta = (rC_theta / R)
 
 
-def calculate_vorticity(Psi, rC_theta,Cx, R, S, T, H0):
+def calculate_vorticity(Psi, rC_theta,Cx, R, T, H0): #How to get T and H0?
     omega = np.zeros_like(Psi)
+    S = np.zeros_like(Psi)
     for i in range(1, N):
         for j in range(1, M-1):
             # Calculate vorticity using finite differences and interpolated values
             term1 = rC_theta[j + 1, i] - rC_theta[j - 1, i]
-            term2 = S[j + 1, i] - S[j - 1, i] # Notsure how to get S
-            term3 = H0[j + 1, i] - H0[j - 1, i] # Notsure how to get H
-            omega[j, i] = (np.pi / (Cx[j,i] * (R[j]-R[j-1]))) * (((C_theta[j, i] / R[j, i]) *  term1) + T[j,i] * term2 - term3)
+            term2 = S[j + 1, i] - S[j - 1, i] # Not sure how to get S
+            term3 = H0[j + 1, i] - H0[j - 1, i] # Not sure how to get H
+            
+            omega[j, i] = (np.pi / (Cx_inlet * (R[j,i]-R[j-1,i]))) * (((C_theta[j, i] / R[j, i]) *  term1) + T[j,i] * term2 - term3)
     return omega
 
 def update_stream_function(Psi, rho, R, omega, blade_width):
     new_Psi = Psi.copy()
-    for i in range(1, num_stations - 1):
-        for j in range(1, num_stations - 1):
+    for j in range(1, N-1):
+        for i in range(1, M -1):
             # Coefficients for finite-difference method
-            A = (1 / (rho[i + 1, j] * R[i + 1, j]) +
+            A = 1/(1 / (rho[i + 1, j] * R[i + 1, j]) +
                  1 / (rho[i - 1, j] * R[i - 1, j]) +
                  1 / (rho[i, j + 1] * R[i, j + 1]) +
                  1 / (rho[i, j - 1] * R[i, j - 1]))
@@ -97,33 +103,35 @@ def update_stream_function(Psi, rho, R, omega, blade_width):
                  Psi[i, j + 1] / (rho[i, j + 1] * R[i, j + 1]) +
                  Psi[i, j - 1] / (rho[i, j - 1] * R[i, j - 1]))
             new_Psi[i, j] = A * (B + ((X[i, j] - X[i, j -1])**2 * omega[i, j]))
+
     return new_Psi
 
 def calculate_velocities(Psi, m_dot, R, rho):
     Cx = np.zeros_like(Psi)
     Cr = np.zeros_like(Psi)
-    for i in range(1, num_stations - 1):
-        for j in range(1, num_stations - 1):
-            Cx[i, j] = m_dot / (2 * np.pi * R[i, j] * rho[i, j]) * (Psi[i, j + 1] - Psi[i, j - 1]) / (2 * blade_width)
-            Cr[i, j] = -m_dot / (2 * np.pi * R[i, j] * rho[i, j]) * (Psi[i + 1, j] - Psi[i - 1, j]) / (2 * blade_width)
+    for i in range(1, N-1):
+        for j in range(M-1):
+            Cx[j, i] = m_dot / (2 * np.pi * R[j, i] * rho[j, i]) * (Psi[j + 1, i] - Psi[j - 1, i]) / (2 * blade_width)
+            Cr[j, i] = -m_dot / (2 * np.pi * R[j, i] * rho[j, i]) * (Psi[j, i + 1] - Psi[j, i - 1]) / (2 * blade_width)
+    
     return Cx, Cr
 
-def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0_inlet, X):
-    for iteration in range(50):
+def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0, X):
+    for iteration in range(500):
         Psi_old = Psi.copy()
-        
+        #print(f"Iteration {iteration + 1}", Psi)
         # Step 1: Calculate Vorticity
         Cx, Cr = calculate_velocities(Psi, m_dot, R, rho)
-        omega = calculate_vorticity(Psi, rC_theta, Cx, R, S, T, H0)
+        omega = calculate_vorticity(Psi, rC_theta, Cx, R, T, H0)
         
         # Step 2: Update Stream Function
         Psi = update_stream_function(Psi, rho, R, omega, blade_width)
         
         # Step 3: Calculate Velocities
-        Cx, Cr = calculate_velocities(Psi, m_dot, R, rho, X)
+        Cx, Cr = calculate_velocities(Psi, m_dot, R, rho)
         
         # Check for convergence
-        if np.max(np.abs(Psi - Psi_old)) < tolerance:
+        if np.max(np.abs(Psi - Psi_old)) <= tolerance:
             print(f"Converged after {iteration + 1} iterations.")
             break
     else:
@@ -133,9 +141,9 @@ def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0_inlet, X):
 
 def trace_thermodynamic_variables(H0_inlet, Cx, Cr):
     H0_rel = np.zeros_like(Cx)
-    for i in range(1, num_stations - 1):
-        for j in range(1, num_stations - 1):
-            H0_rel[i, j] = H0_inlet - 0.5 * (Cx[i, j]**2 + Cr[i, j]**2)
+    for i in range(1, N):
+        for j in range(1, M): 
+            H0_rel[j, i] = H0_inlet - 0.5 * (Cx[j, i]**2 + Cr[j, i]**2)
     return H0_rel
 
 def calculate_results(Cx, Cr, H0_inlet, H0_rel):
@@ -148,10 +156,10 @@ def calculate_results(Cx, Cr, H0_inlet, H0_rel):
     pressure_rise = delta_H0 * rho_inlet * Cp
     reaction = (H0_rel - H0_inlet) / H0_inlet
     power_absorbed = m_dot * delta_H0
-    return TE_radial_velocity, LE_incidence, turning_deflection, pressure_rise, reaction, power_absorbed
+    return TE_radial_velocity, np.rad2deg(LE_incidence), np.rad2deg(turning_deflection), pressure_rise, reaction, power_absorbed
 
-Psi, Cx, Cr = check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0_inlet, X)
+Psi, Cx, Cr = check_convergence(Psi_initial, tolerance, rho, R, m_dot, blade_width, H0, X)
 H0_rel = trace_thermodynamic_variables(H0_inlet, Cx, Cr)
-results = calculate_results(Cx, Cr, H0_inlet, H0_rel)
+results = calculate_results(Cx, Cr, H0, H0_rel)
 
-#print("Results:", results)
+print("Results:", results)
