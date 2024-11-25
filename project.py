@@ -23,10 +23,10 @@ r_width = 0.1  # Blade width (m)
 
 res = 10  # Grid resolution (nodes/blade)
 
-x_points = int(res / r_width)
-r_points = int(res / r_width)
-x = np.linspace(0, 1, x_points)
-r = np.linspace(r_hub, r_tip, r_points)
+N = int(res / r_width)
+M = int(res / r_width)
+x = np.linspace(0, 1, N)
+r = np.linspace(r_hub, r_tip, M)
 X, R = np.meshgrid(x, r)
 
 # Initialize stream function
@@ -40,9 +40,11 @@ H0_inlet = cp * T_inlet + Cx_inlet**2 / 2
 Cx = np.full_like(Psi, Cx_inlet)
 Cr = np.zeros_like(Psi)
 
+dPsi_dr = np.gradient(Psi, axis=0) / (2 * (x[1] - x[0]))
+dPsi_dx = np.gradient(Psi, axis=1) / (2 * (r[1] - r[0]))
 
-dPsi_dx = np.gradient(Psi, axis=1) / (x[1] - x[0])
-dPsi_dr = np.gradient(Psi, axis=0) / (r[1] - r[0])
+Cx = (m_dot/(2*np.pi*rho*r))*dPsi_dr
+Cr = (-m_dot/(2*np.pi*rho*r))*dPsi_dx
 
 
 #================================================================================================
@@ -50,8 +52,8 @@ dPsi_dr = np.gradient(Psi, axis=0) / (r[1] - r[0])
 rC = np.zeros_like(Psi)
 
 # Loop over the radial positions to set rC as a constant along each radial line
-for j in range(r_points):
-    rC[:, j] = r[j] * Cx_inlet * np.tan(alpha_inlet)
+for j in range(M):
+    rC[j, :] = r[j] * Cx_inlet * np.tan(alpha_inlet)
 
 #================================================================================================
 # LE and TE for Blade
@@ -61,13 +63,11 @@ TE = math.floor((len(x)+res)/2)  # Index for the trailing edge
 # Initialize loss factor matrix with zeros
 varpi = np.zeros_like(Psi)
 
-# Set uniform loss factor between LE+1 and TE
+# Set uniform loss factor from LE+1 to TE
 for i in range(LE + 1, TE + 1):
     varpi[ : , i] = 0.5 / (TE - LE)
 
 #================================================================================================
-# Define the number of radial points (hub to shroud)
-M = r_points
 
 # Initialize additional swirl increase array at the trailing edge
 delta_rC_TE = np.zeros(M)
@@ -76,43 +76,44 @@ delta_rC_TE = np.zeros(M)
 for j in range(M):
     delta_rC_TE[j] = deltarC_hub + (deltarC_tip - deltarC_hub) * (j / (M - 1))
 
-# Print delta_rC_TE for verification
-#print("Swirl Increase at TE (Δ[rC] at TE):\n", delta_rC_TE[:, TE])
-
 # Distribute the additional swirl inside the blade from LE+1 to TE
 for j in range(M):
     for i in range(LE + 1, TE + 1):
         rC[j,i] = rC[j, i - 1] + delta_rC_TE[j] / (TE - LE)
 
 # Update rC after the trailing edge
-for i in range(TE+1, x_points):
+for i in range(TE+1, N):
     rC[:,i] = rC[:, TE]
 
 
 #================================================================================================
 
 # Initialize vorticity and auxiliary terms
+
 omega = np.zeros_like(Psi)
-S = np.zeros_like(Psi)  # Source term initialized to zero
+S = np.zeros_like(Psi)  
+T = np.zeros_like(Psi)
+for j in range(M):
+    C_theta = rC[j, :] / r[j]
+    V_squared = Cx**2 + Cr**2 + C_theta**2
+    T = (H0_inlet / cp) - (V_squared / (2 * cp))
 
 # Calculate vorticity ω for each node based on the formula provided
-for i in range(1, x_points - 1):  # Avoid boundary points
-    for j in range(1, r_points - 1):  # Avoid boundary points
-        C_theta_diff = (rC[i, j+1] - rC[i, j-1]) / (2 * (r[j+1] - r[j-1]))
-        S_diff = S[i, j+1] - S[i, j-1]
-        H_diff = (H0_inlet / rho_inlet) * (r[j+1] - r[j-1])
-
-        omega[i, j] = (np.pi / (r[j] * m_dot * Cx[i, j])) * (
-            (C_theta_diff - (r[j] * C_theta_diff)) +
-            varpi[i, j] * (S_diff - H_diff)
-        )
+for i in range(1, N):  # Avoid boundary points
+    for j in range(1, M-1):  # Avoid boundary points
+        rC_theta_diff = (rC[j+1, i] - rC[j-1,i])
+        S_diff = S[ j+1, i] - S[ j-1, i]
+        H_diff = (H0_inlet / rho_inlet)
         
 
+        omega[j, i] = (np.pi / ((r[j]-r[j-1]) * m_dot * Cx[j,i])) * (( C_theta/ (r[j]) * rC_theta_diff) + T[j,i] * S_diff - H_diff)
+        
+print(T_inlet)
 #================================================================================================
 
 # Plot the updated vorticity distribution
 plt.figure()
-plt.contourf(X, R, omega, levels=50, cmap='viridis')
+plt.contourf(X, R, omega, levels=500, cmap='viridis')
 plt.colorbar(label='Vorticity (ω)')
 plt.xlabel('x')
 plt.ylabel('r')
