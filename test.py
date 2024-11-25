@@ -162,4 +162,9 @@ Psi, Cx, Cr = check_convergence(Psi_initial, tolerance, rho, R, m_dot, blade_wid
 H0_rel = trace_thermodynamic_variables(H0_inlet, Cx, Cr)
 results = calculate_results(Cx, Cr, H0, H0_rel)
 
-print("Results:", results)
+print("TE Radial Velocity: ", results[0][0:10:4])
+print("LE Incidence: ", results[1][0:10:4])
+print("Deflection: ", results[2][0:10:4])
+print("Pressure Rise: ", results[3][0:10:4]) #The output is odd, need to figure out what values to extract for Pressure rise and TotalPressure rise.
+print("Reaction: ", results[4][0:10:4]) #The output is odd, need to figure out what values to extract for Reaction.
+print("Power Absorbed: ", results[5][0:10:4]) #The output is odd, Power Absorbed shouldnt output an array.
