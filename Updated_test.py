@@ -19,6 +19,9 @@ delta_rC_theta_TE_tip = 84.4  # m^2/s
 tolerance = 1e-5
 alpha_inlet = np.deg2rad(30)  # radians
 incompressible = False
+
+
+iter_num = 2000 # Number of iterations for convergence
 N = 3 * num_stations
 M = num_stations
 LE = num_stations  # Index for the leading edge
@@ -66,10 +69,7 @@ def start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi):
     # Distribute the additional swirl inside the blade from LE+1 to TE
     for j in range(M):
         for i in range(LE + 1, TE+1):
-            rC[j, i] = rC[j, i - 1] + delta_rC_TE[j] * (i - LE) / (TE - LE)
-    
-    #Check Swirl has been distributed properly
-    #print(rC[0,TE]-rC[0,TE-1])        
+            rC[j, i] = rC[j, i - 1] + delta_rC_TE[j] * (i - LE) / (TE - LE)   
     
     # Update rC after the trailing edge
     for i in range(TE+1, N):
@@ -81,7 +81,7 @@ rC_theta = start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi_initial
 C_theta = (rC_theta / R)
 
 
-# Finging T, S and H0
+# Finging T, S, H0 and rho
 def update_thermodynamics(Cx, Cr, incompressible):
     T = np.zeros_like(Cx)
     S = np.zeros_like(Cx)
@@ -102,11 +102,10 @@ def update_thermodynamics(Cx, Cr, incompressible):
             
             if incompressible == False:
                 rho[j, i] = p[j, i] / (R_gas * T[j, i])
-    return T, S, H0
+    return T, S, H0, rho
 
 def calculate_vorticity(Psi, rC_theta,Cx, R, T, S, H0):
     omega = np.zeros_like(Psi)
-    S = np.zeros_like(Psi)
     for i in range(1, N):
         for j in range(1, M-1):
             # Calculate vorticity using finite differences and interpolated values
@@ -117,7 +116,7 @@ def calculate_vorticity(Psi, rC_theta,Cx, R, T, S, H0):
             omega[j, i] = (np.pi / (Cx_inlet * (R[j,i]-R[j-1,i]))) * (((C_theta[j, i] / R[j, i]) *  term1) + T[j,i] * term2 - term3)
     return omega
 
-def update_stream_function(Psi, rho, R, omega, blade_width):
+def update_stream_function(Psi, rho, R, omega):
     new_Psi = Psi.copy()
     for j in range(1, N-1):
         for i in range(1, M -1):
@@ -145,16 +144,16 @@ def calculate_velocities(Psi, m_dot, R, rho):
     return Cx, Cr
 
 def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0, X):
-    for iteration in range(1000):
+    for iteration in range(iter_num):
         Psi_old = Psi.copy()
-        #print(f"Iteration {iteration + 1}", Psi)
+       
         # Step 1: Calculate Vorticity
         Cx, Cr = calculate_velocities(Psi, m_dot, R, rho)
-        T, S, H0 = update_thermodynamics(Cx, Cr, incompressible)
+        T, S, H0, rho = update_thermodynamics(Cx, Cr, incompressible)
         omega = calculate_vorticity(Psi, rC_theta, Cx, R, T, S, H0)
         
         # Step 2: Update Stream Function
-        Psi = update_stream_function(Psi, rho, R, omega, blade_width)
+        Psi = update_stream_function(Psi, rho, R, omega)
         
         # Step 3: Calculate Velocities
         Cx, Cr = calculate_velocities(Psi, m_dot, R, rho)
@@ -163,9 +162,10 @@ def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0, X):
         if np.max(np.abs(Psi - Psi_old)) <= tolerance:
             print(f"Converged after {iteration + 1} iterations.")
             break
-    else:
-        print(f"Did not converge after {iteration + 1} iterations.")
-        print(f"Maximum residual: {np.max(np.abs(Psi - Psi_old))}")
+        elif iteration == iter_num - 1:
+            print(f"Did not converge after {iteration + 1} iterations.")
+            print(f"Maximum residual: {np.max(np.abs(Psi - Psi_old))}")
+    
     return Psi, Cx, Cr
 
 def trace_thermodynamic_variables(H0_inlet, Cx, Cr):
@@ -203,7 +203,7 @@ def blade_shape(X, R, rC_theta):
     ax.set_xlabel("Axial Position (X)")
     ax.set_ylabel("Radial Position (R)")
     ax.set_zlabel("Swirl (rC_theta)")
-    ax.set_xlim(0, 0.5)
+    ax.set_xlim(-0.5, 0.5)
     
 
 # Plotting the axial velocity vs Radius
@@ -246,7 +246,7 @@ def tangential_velocity(C_theta, R):
 def psi(Psi, R):
     plt.figure(figsize=(8, 5))
     for i in range(Psi.shape[1]):  # Loop through axial positions
-        plt.plot(R[:, 0], Psi[:, i], label=f"X = {i}")
+        plt.plot(R[:,0], Psi[:, i], label=f"X = {i}")
     plt.title("Stream Function (\u03A8) from Hub to Shroud")
     plt.xlabel("Radius (R)")
     plt.ylabel("Stream Function (\u03A8)")
