@@ -18,6 +18,7 @@ delta_rC_theta_TE_hub = 82.3  # m^2/s
 delta_rC_theta_TE_tip = 84.4  # m^2/s
 tolerance = 1e-5
 alpha_inlet = np.deg2rad(30)  # radians
+incompressible = True # Assume incompressible / compressible flow
 N = 3 * num_stations
 M = num_stations
 LE = num_stations  # Index for the leading edge
@@ -80,13 +81,13 @@ rC_theta = start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi_initial
 C_theta = (rC_theta / R)
 
 
-# Finging T, S and H0
-def update_thermodynamics(Cx, Cr):
+# Finding T, S, H0 and rho
+def update_thermodynamics(Cx, Cr, incompressible):
     T = np.zeros_like(Cx)
     S = np.zeros_like(Cx)
     H0 = np.zeros_like(Cx)
     p = np.zeros_like(Cx)
-
+    print(incompressible)
     for j in range(Cx.shape[0]):
         for i in range(Cx.shape[1]):
             C_local = np.sqrt(np.clip(Cx[j, i], -1e6, 1e6)**2 + np.clip(Cr[j, i], -1e6, 1e6)**2)
@@ -98,12 +99,15 @@ def update_thermodynamics(Cx, Cr):
 
             if T[j, i] > 0 and p[j, i] > 0:
                 S[j, i] = Cp * np.log(T[j, i] / T_inlet) - R_gas * np.log(p[j, i] / p_inlet)
-    return T, S, H0
+            if incompressible == False:
+                rho[j, i] = p[j, i] / (R_gas * T[j, i])
+    return T, S, H0, rho
 
-def calculate_vorticity(Psi, rC_theta,Cx, R, T, H0): #How to get T and H0?
+def calculate_vorticity(Psi, rC_theta,Cx, Cr, R, T, H0): #How to get T and H0?
     omega = np.zeros_like(Psi)
     S = np.zeros_like(Psi)
     for i in range(1, N):
+        T, S, H0, rho = update_thermodynamics(Cx, Cr, incompressible)
         for j in range(1, M-1):
             # Calculate vorticity using finite differences and interpolated values
             term1 = rC_theta[j + 1, i] - rC_theta[j - 1, i]
@@ -146,7 +150,7 @@ def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0, X):
         #print(f"Iteration {iteration + 1}", Psi)
         # Step 1: Calculate Vorticity
         Cx, Cr = calculate_velocities(Psi, m_dot, R, rho)
-        omega = calculate_vorticity(Psi, rC_theta, Cx, R, T, H0)
+        omega = calculate_vorticity(Psi, rC_theta, Cx, Cr, R, T, H0)
         
         # Step 2: Update Stream Function
         Psi = update_stream_function(Psi, rho, R, omega, blade_width)
@@ -198,8 +202,8 @@ def blade_shape(X, R, rC_theta):
     ax.set_xlabel("Axial Position (X)")
     ax.set_ylabel("Radial Position (R)")
     ax.set_zlabel("Swirl (rC_theta)")
-    ax.set_xlim(0, 0.5)
-    plt.show()
+    ax.set_xlim(-0.5, 0.5)
+    
 
 # Plotting the axial velocity vs Radius
 def axial_velocity(Cx, R):
@@ -211,7 +215,7 @@ def axial_velocity(Cx, R):
     plt.ylabel("Axial Velocity (Cx)")
     plt.legend()
     plt.grid(True)
-    plt.show()
+    
 
 # Plotting the radial velocity vs Radius
 def radial_velocity(Cr, R):
@@ -223,7 +227,7 @@ def radial_velocity(Cr, R):
     plt.ylabel("Radial Velocity (Cr)")
     plt.legend()
     plt.grid(True)
-    plt.show()
+    
 
 # Plotting the tangential velocity vs Radius
 def tangential_velocity(C_theta, R):
@@ -235,7 +239,7 @@ def tangential_velocity(C_theta, R):
     plt.ylabel("Tangential Velocity (Cz)")
     plt.legend()
     plt.grid(True)
-    plt.show()
+    
 
 # Plotting the stream function vs Radius 
 def psi(Psi, R):
@@ -247,10 +251,11 @@ def psi(Psi, R):
     plt.ylabel("Stream Function (\u03A8)")
     plt.legend()
     plt.grid(True)
-    plt.show()
+    
 
 blade_shape(X, R, rC_theta)  
 axial_velocity(Cx, R)        
 radial_velocity(Cr, R)      
 tangential_velocity(C_theta, R)  
 psi(Psi, R)
+plt.show()
