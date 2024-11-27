@@ -21,7 +21,7 @@ alpha_inlet = np.deg2rad(30)  # radians
 incompressible = False
 
 
-iter_num = 2000 # Number of iterations for convergence
+iter_num = 500 # Number of iterations for convergence
 N = 3 * num_stations
 M = num_stations
 LE = num_stations  # Index for the leading edge
@@ -87,9 +87,10 @@ def update_thermodynamics(Cx, Cr, incompressible):
     S = np.zeros_like(Cx)
     H0 = np.zeros_like(Cx)
     p = np.zeros_like(Cx)
-
+    
     for j in range(Cx.shape[0]):
         for i in range(Cx.shape[1]):
+            
             C_local = np.sqrt(np.clip(Cx[j, i], -1e6, 1e6)**2 + np.clip(Cr[j, i], -1e6, 1e6)**2)
 
             H0[j, i] = H0_inlet - 0.5 * C_local**2
@@ -116,32 +117,68 @@ def calculate_vorticity(Psi, rC_theta,Cx, R, T, S, H0):
             omega[j, i] = (np.pi / (Cx_inlet * (R[j,i]-R[j-1,i]))) * (((C_theta[j, i] / R[j, i]) *  term1) + T[j,i] * term2 - term3)
     return omega
 
-def update_stream_function(Psi, rho, R, omega):
+def update_stream_function(Psi, rho, R, omega, dx):
+
     new_Psi = Psi.copy()
-    for j in range(1, N-1):
-        for i in range(1, M -1):
-            # Coefficients for finite-difference method
-            A = 1/(1 / (rho[i + 1, j] * R[i + 1, j]) +
-                 1 / (rho[i - 1, j] * R[i - 1, j]) +
-                 1 / (rho[i, j + 1] * R[i, j + 1]) +
-                 1 / (rho[i, j - 1] * R[i, j - 1]))
-            B = (Psi[i + 1, j] / (rho[i + 1, j] * R[i + 1, j]) +
-                 Psi[i - 1, j] / (rho[i - 1, j] * R[i - 1, j]) +
-                 Psi[i, j + 1] / (rho[i, j + 1] * R[i, j + 1]) +
-                 Psi[i, j - 1] / (rho[i, j - 1] * R[i, j - 1]))
-            new_Psi[i, j] = A * (B + ((X[i, j] - X[i, j -1])**2 * omega[i, j]))
+
+    for j in range(1, N - 1):  # Loop over axial positions
+        for i in range(1, M - 1):  # Loop over radial positions
+            # Interpolate rho and R at half-grid points
+            rho_ip1h_j = (rho[i + 1, j] + rho[i, j]) / 2
+            rho_im1h_j = (rho[i - 1, j] + rho[i, j]) / 2
+            rho_i_jp1h = (rho[i, j + 1] + rho[i, j]) / 2
+            rho_i_jm1h = (rho[i, j - 1] + rho[i, j]) / 2
+
+            R_ip1h_j = (R[i + 1, j] + R[i, j]) / 2
+            R_im1h_j = (R[i - 1, j] + R[i, j]) / 2
+            R_i_jp1h = (R[i, j + 1] + R[i, j]) / 2
+            R_i_jm1h = (R[i, j - 1] + R[i, j]) / 2
+
+            # Calculate A_ij using interpolated values
+            A_ij = 1 / (
+                1 / (rho_ip1h_j * R_ip1h_j)
+                + 1 / (rho_im1h_j * R_im1h_j)
+                + 1 / (rho_i_jp1h * R_i_jp1h)
+                + 1 / (rho_i_jm1h * R_i_jm1h)
+            )
+            
+            # Calculate B_ij using interpolated values
+            B_ij = (
+                Psi[i + 1, j] / (rho_ip1h_j * R_ip1h_j)
+                + Psi[i - 1, j] / (rho_im1h_j * R_im1h_j)
+                + Psi[i, j + 1] / (rho_i_jp1h * R_i_jp1h)
+                + Psi[i, j - 1] / (rho_i_jm1h * R_i_jm1h)
+            )
+            print(Psi[i + 1, j])
+            # Update Psi
+            new_Psi[i, j] = A_ij * (B_ij + dx**2 * omega[i, j])
 
     return new_Psi
+
 
 def calculate_velocities(Psi, m_dot, R, rho):
     Cx = np.zeros_like(Psi)
     Cr = np.zeros_like(Psi)
-    for i in range(1, N-1):
-        for j in range(M-1):
-            Cx[j, i] = m_dot / (2 * np.pi * R[j, i] * rho[j, i]) * (Psi[j + 1, i] - Psi[j - 1, i]) / (2 * blade_width)
-            Cr[j, i] = -m_dot / (2 * np.pi * R[j, i] * rho[j, i]) * (Psi[j, i + 1] - Psi[j, i - 1]) / (2 * blade_width)
-    
+
+    dx = 0.01
+    dr = 0.01
+
+    for i in range(1, N - 1):
+        for j in range(1, M - 1):
+            # Calculate axial and radial velocities at internal points
+            Cx[j, i] = m_dot / (2 * np.pi * R[j, i] * rho[j, i]) * (Psi[j + 1, i] - Psi[j - 1, i]) / (2 * dr)
+            Cr[j, i] = -m_dot / (2 * np.pi * R[j, i] * rho[j, i]) * (Psi[j, i + 1] - Psi[j, i - 1]) / (2 * dx)
+
+        # Set Cr = 0 at the walls
+        Cr[0, i] = 0
+        Cr[M - 1, i] = 0 
+
+        # Calculate Cx at hub and shroud
+        Cx[0, i] = m_dot / (2 * np.pi * R[0, i] * rho[0, i]) * (Psi[1, i] - Psi[0, i])/ (2 * dr)
+        Cx[M - 1, i] = -m_dot / (2 * np.pi * R[M - 1, i] * rho[M - 1, i]) * (Psi[M - 1, i] - Psi[M - 2, i]) / (2 *dr)
+
     return Cx, Cr
+
 
 def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0, X):
     for iteration in range(iter_num):
@@ -153,7 +190,7 @@ def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0, X):
         omega = calculate_vorticity(Psi, rC_theta, Cx, R, T, S, H0)
         
         # Step 2: Update Stream Function
-        Psi = update_stream_function(Psi, rho, R, omega)
+        Psi = update_stream_function(Psi, rho, R, omega, 0.01)
         
         # Step 3: Calculate Velocities
         Cx, Cr = calculate_velocities(Psi, m_dot, R, rho)
@@ -175,25 +212,72 @@ def trace_thermodynamic_variables(H0_inlet, Cx, Cr):
             H0_rel[j, i] = H0_inlet - 0.5 * (Cx[j, i]**2 + Cr[j, i]**2)
     return H0_rel
 
-def calculate_results(Cx, Cr, H0_inlet, H0_rel):
-    TE_radial_velocity = Cr[:, -1]
-    LE_incidence = np.arctan2(Cr[:, 0], Cx[:, 0]) - alpha_inlet
-    alpha_LE = np.arctan2(Cr[:, 0], Cx[:, 0])
-    alpha_TE = np.arctan2(Cr[:, -1], Cx[:, -1])
-    turning_deflection = alpha_TE - alpha_LE
-    delta_H0 = H0_rel - H0_inlet
-    pressure_rise = delta_H0 * rho_inlet * Cp
-    reaction = (H0_rel - H0_inlet) / H0_inlet
-    power_absorbed = m_dot * delta_H0
-    return TE_radial_velocity, np.rad2deg(LE_incidence), np.rad2deg(turning_deflection), pressure_rise, reaction, power_absorbed
+def calculate_results(Cx, Cr, H0_inlet, H0_rel, LE, TE):
+
+    # Trailing Edge (T.E.) radial velocity (Cr at trailing edge)
+    TE_radial_velocity = Cr[:, TE-1].reshape(-1, 1)
+
+    # Leading Edge (L.E.) incidence (difference between flow angle and blade angle)
+    LE_incidence = (np.arctan2(Cr[:, LE-1], Cx[:, LE-1]) - alpha_inlet).reshape(-1, 1)
+
+    # Turning Deflection (difference in flow angle between L.E. and T.E.)
+    alpha_LE = np.arctan2(Cr[:, LE-1], Cx[:, LE-1])
+    alpha_TE = np.arctan2(Cr[:, TE-1], Cx[:, TE-1])
+    turning_deflection = (alpha_TE - alpha_LE).reshape(-1, 1)
+
+    # Change in stagnation enthalpy
+    delta_H0 = (H0_rel[:, TE-1] - H0_inlet).reshape(-1, 1)
+
+    # Static pressure rise (from stagnation enthalpy change)
+    pressure_rise = (delta_H0 * rho_inlet * Cp).reshape(-1, 1)
+
+    # Total pressure rise (assuming isentropic flow for approximation)
+    total_pressure_rise = (rho_inlet * delta_H0).reshape(-1, 1)
+
+    # Reaction (enthalpy change ratio)
+    reaction = ((H0_rel[:, TE-1] - H0_inlet) / H0_inlet).reshape(-1, 1)
+
+    # Power absorbed by the rotor
+    power_absorbed = (m_dot * delta_H0).reshape(-1, 1)
+
+    return TE_radial_velocity,np.rad2deg(LE_incidence),np.rad2deg(turning_deflection),pressure_rise,total_pressure_rise,reaction,power_absorbed
 
 Psi, Cx, Cr = check_convergence(Psi_initial, tolerance, rho, R, m_dot, blade_width, H0, X)
 H0_rel = trace_thermodynamic_variables(H0_inlet, Cx, Cr)
-results = calculate_results(Cx, Cr, H0, H0_rel)
 
-#print("Results:", results)
+#Results atHub, Midspan and Shroud
 
+TE_radial_velocity, LE_incidence, turning_deflection, pressure_rise, total_pressure_rise, reaction, power_absorbed = calculate_results(Cx, Cr, H0_inlet, H0_rel, LE, TE)
 
+#Print Results
+print("Hub Results:")
+print("TE Radial Velocity:", TE_radial_velocity[0])
+print("LE Incidence:", LE_incidence[0])
+print("Turning Deflection:", turning_deflection[0])
+print("Static Pressure Rise:", pressure_rise[0])
+print("Total Pressure Rise:", total_pressure_rise[0])
+print("Reaction:", reaction[0])
+print("Power Absorbed:", power_absorbed[0])
+
+print("\nMidspan Results:")
+print("TE Radial Velocity:", TE_radial_velocity[M // 2])
+print("LE Incidence:", LE_incidence[M // 2])
+print("Turning Deflection:", turning_deflection[M // 2])
+print("Static Pressure Rise:", pressure_rise[M // 2])
+print("Total Pressure Rise:", total_pressure_rise[M // 2])
+print("Reaction:", reaction[M // 2])
+print("Power Absorbed:", power_absorbed[M // 2])
+
+print("\nTip Results:")
+print("TE Radial Velocity:", TE_radial_velocity[-1])
+print("LE Incidence:", LE_incidence[-1])
+print("Turning Deflection:", turning_deflection[-1])
+print("Static Pressure Rise:", pressure_rise[-1])
+print("Total Pressure Rise:", total_pressure_rise[-1])
+print("Reaction:", reaction[M-1])
+print("Power Absorbed:", power_absorbed[-1])
+
+print(reaction)
 # Plotting the 3D blade shapre 
 def blade_shape(X, R, rC_theta):
     fig = plt.figure(figsize=(10, 6))
