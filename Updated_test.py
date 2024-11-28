@@ -19,12 +19,9 @@ delta_rC_theta_TE_tip = 84.4  # m^2/s
 tolerance = 1e-5
 alpha_inlet = np.deg2rad(30)  # radians
 incompressible = False
-gamma = 1.4
-cp = 1005
 
 
-
-iter_num = 10 # Number of iterations for convergence
+iter_num = 500 # Number of iterations for convergence
 N = 3 * num_stations
 M = num_stations
 LE = num_stations  # Index for the leading edge
@@ -123,13 +120,10 @@ def calculate_vorticity(Psi, rC_theta,Cx, R, T, S, H0):
 def update_stream_function(Psi, rho, R, omega, dx):
 
     new_Psi = Psi.copy()
-    
+
     for j in range(1, N - 1):  # Loop over axial positions
         for i in range(1, M - 1):  # Loop over radial positions
-
             # Interpolate rho and R at half-grid points
-            # 1p1h = 1 plus 1 half
-            # 1m1h = 1 minus 1 half
             rho_ip1h_j = (rho[i + 1, j] + rho[i, j]) / 2
             rho_im1h_j = (rho[i - 1, j] + rho[i, j]) / 2
             rho_i_jp1h = (rho[i, j + 1] + rho[i, j]) / 2
@@ -139,7 +133,7 @@ def update_stream_function(Psi, rho, R, omega, dx):
             R_im1h_j = (R[i - 1, j] + R[i, j]) / 2
             R_i_jp1h = (R[i, j + 1] + R[i, j]) / 2
             R_i_jm1h = (R[i, j - 1] + R[i, j]) / 2
-            
+
             # Calculate A_ij using interpolated values
             A_ij = 1 / (
                 1 / (rho_ip1h_j * R_ip1h_j)
@@ -155,10 +149,10 @@ def update_stream_function(Psi, rho, R, omega, dx):
                 + Psi[i, j + 1] / (rho_i_jp1h * R_i_jp1h)
                 + Psi[i, j - 1] / (rho_i_jm1h * R_i_jm1h)
             )
-            
+            print(Psi[i + 1, j])
             # Update Psi
             new_Psi[i, j] = A_ij * (B_ij + dx**2 * omega[i, j])
-            print("rho :", rho[i + 1, j])
+
     return new_Psi
 
 
@@ -189,12 +183,10 @@ def calculate_velocities(Psi, m_dot, R, rho):
 def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0, X):
     for iteration in range(iter_num):
         Psi_old = Psi.copy()
-
+       
         # Step 1: Calculate Vorticity
-        if iteration == 0:
-            Cx, Cr = calculate_velocities(Psi, m_dot, R, rho)
-        
-        #T, S, H0, rho = update_thermodynamics(Cx, Cr, incompressible)
+        Cx, Cr = calculate_velocities(Psi, m_dot, R, rho)
+        T, S, H0, rho = update_thermodynamics(Cx, Cr, incompressible)
         omega = calculate_vorticity(Psi, rC_theta, Cx, R, T, S, H0)
         
         # Step 2: Update Stream Function
@@ -203,13 +195,6 @@ def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0, X):
         # Step 3: Calculate Velocities
         Cx, Cr = calculate_velocities(Psi, m_dot, R, rho)
         
-        results = trace_thermodynamic_variables(Psi, H0_inlet, R, omega, gamma, cp, R_gas)
-        #Psi = results["Psi"]
-        Cx = results["Cx"]
-        Cr = results["Cr"]
-        rho = results["rho"]
-        H0_rel = results["H0_rel"]
-
         # Check for convergence
         if np.max(np.abs(Psi - Psi_old)) <= tolerance:
             print(f"Converged after {iteration + 1} iterations.")
@@ -218,61 +203,14 @@ def check_convergence(Psi, tolerance, rho, R, m_dot, blade_width, H0, X):
             print(f"Did not converge after {iteration + 1} iterations.")
             print(f"Maximum residual: {np.max(np.abs(Psi - Psi_old))}")
     
-    return Psi, Cx, Cr, omega, H0_rel
+    return Psi, Cx, Cr
 
-def trace_thermodynamic_variables(Psi, H0_inlet, R, omega, gamma, cp, R_gas):
-    """
-    Trace thermodynamic variables along streamlines and update their values.
-
-    Args:
-        Psi: Stream function array (10xN).
-        H0_inlet: Total enthalpy at the inlet (scalar or array).
-        R: Radial coordinate array (10xN).
-        omega: Rotational speed (rad/s).
-        gamma: Specific heat ratio.
-        cp: Specific heat capacity (J/kg.K).
-        R_gas: Specific gas constant (J/kg.K).
-
-    Returns:
-        Dict of updated thermodynamic properties.
-    """
-    H0_rel = np.zeros_like(Psi)
-    p = np.zeros_like(Psi)
-    rho = np.zeros_like(Psi)
-    T = np.zeros_like(Psi)
-    S = np.zeros_like(Psi)
-    Cx = np.zeros_like(Psi)
-    Cr = np.zeros_like(Psi)
-    V = np.zeros_like(Psi)
-    beta = np.zeros_like(Psi)
-
-    for i in range(1, N):  # Loop over nodes axially
-        for j in range(1, M):  # Loop over nodes radially
-            # Identify streamline origin using Psi
-            a = (Psi[j, i] - Psi[j - 1, i]) / (Psi[j, i - 1] - Psi[j - 1, i - 1])
-            b = 1 - a
-
-            # Total enthalpy at streamline origin
-            H0_rel[j, i] = a * H0_rel[j - 1, i] + b * H0_rel[j - 1, i - 1]
-
-            # Local relative total enthalpy
-            H0_rel[j, i] -= 0.5 * omega[j, i]**2 * (R[j, i]**2 - R[j - 1, i]**2)
-
-            # Calculate velocity components
-            Cx[j, i] = R[j, i] * omega[j, i]
-            Cr[j, i] = Cx[j, i] - (R[j, i] * omega[j, i])
-            V[j, i] = np.sqrt(Cx[j, i]**2 + Cr[j, i]**2)
-            beta[j, i] = np.arctan(Cr[j, i] / Cx[j, i])
-
-            # Calculate thermodynamic properties
-            h = H0_rel[j, i] - 0.5 * V[j, i]**2
-            T[j, i] = h / cp
-            p[j, i] = p[j - 1, i] * (T[j, i] / T[j - 1, i]) ** (gamma / (gamma - 1))
-            rho[j, i] = p[j, i] / (R_gas * T[j, i])
-            S[j, i] = cp * np.log(h / H0_inlet) - R_gas * np.log(p[j, i] / p[j - 1, i])
-
-    return {"H0_rel": H0_rel, "Cx": Cx, "Cr": Cr, "V": V, "beta": beta, "T": T, "p": p, "rho": rho, "s": S}
-
+def trace_thermodynamic_variables(H0_inlet, Cx, Cr):
+    H0_rel = np.zeros_like(Cx)
+    for i in range(1, N):
+        for j in range(1, M): 
+            H0_rel[j, i] = H0_inlet - 0.5 * (Cx[j, i]**2 + Cr[j, i]**2)
+    return H0_rel
 
 def calculate_results(Cx, Cr, H0_inlet, H0_rel, LE, TE):
 
@@ -304,11 +242,10 @@ def calculate_results(Cx, Cr, H0_inlet, H0_rel, LE, TE):
 
     return TE_radial_velocity,np.rad2deg(LE_incidence),np.rad2deg(turning_deflection),pressure_rise,total_pressure_rise,reaction,power_absorbed
 
-Psi, Cx, Cr, omega, H0_rel = check_convergence(Psi_initial, tolerance, rho, R, m_dot, blade_width, H0, X)
-#final = trace_thermodynamic_variables(Psi, H0_inlet, R, omega, gamma, cp, R_gas)["H0_rel"]
+Psi, Cx, Cr = check_convergence(Psi_initial, tolerance, rho, R, m_dot, blade_width, H0, X)
+H0_rel = trace_thermodynamic_variables(H0_inlet, Cx, Cr)
 
-
-#Results at Hub, Midspan and Shroud
+#Results atHub, Midspan and Shroud
 
 TE_radial_velocity, LE_incidence, turning_deflection, pressure_rise, total_pressure_rise, reaction, power_absorbed = calculate_results(Cx, Cr, H0_inlet, H0_rel, LE, TE)
 
@@ -406,4 +343,4 @@ axial_velocity(Cx, R)
 radial_velocity(Cr, R)      
 tangential_velocity(C_theta, R)  
 psi(Psi, R)
-#plt.show()
+plt.show()

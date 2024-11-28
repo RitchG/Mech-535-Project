@@ -18,7 +18,7 @@ alpha_inlet = np.deg2rad(30)  # radians
 delta_rC_theta_TE_hub = 82.3  # m^2/s
 delta_rC_theta_TE_tip = 84.4  # m^2/s
 
-iter_max = 5
+iter_max = 1
 N = 3 * num_stations
 M = num_stations
 LE = num_stations
@@ -169,9 +169,8 @@ def trace_thermodynamic_variables(Psi, H0_inlet, R, omega, gamma, cp, R_gas):
     Returns:
         Dict of updated thermodynamic properties.
     """
-    H01_rel = np.zeros_like(Psi)
+    H01_rel = np.full_like(Psi, H0_inlet)
     H0_rel = np.zeros_like(Psi)
-    
 
     S = np.zeros_like(Psi)
     beta = np.zeros_like(Psi)
@@ -179,17 +178,18 @@ def trace_thermodynamic_variables(Psi, H0_inlet, R, omega, gamma, cp, R_gas):
     for i in range(1, N-1):  # Loop over nodes axially
         for j in range(1, M-1):  # Loop over nodes radially
             # Identify streamline origin using Psi
+            print(Psi[j, i], Psi[j - 1, i], Psi[j, i - 1], Psi[j - 1, i - 1])
             a = (Psi[j, i] - Psi[j - 1, i]) / (Psi[j, i - 1] - Psi[j - 1, i - 1])
+            print("a:", a)
             b = 1 - a
 
             # Total enthalpy at streamline origin
-            H01_rel[j, i] = a * H0_rel[j - 1, i] + b * H0_rel[j - 1, i - 1]
+            H01_rel[j, i] = a * H01_rel[j - 1, i] + b * H01_rel[j - 1, i - 1]
             
             # Local relative total enthalpy
             H0_rel[j, i] = H01_rel[j, i] - 0.5 * (a * omega[j, i])**2 + 0.5 * (R[j,i] * omega[j, i])**2
             
             # Calculate velocity components
-            
             Cx, Cr, Cm = calculate_velocities(Psi, m_dot, R, rho)
             beta[j, i] = np.arctan(Cr[j, i] / Cx[j, i])
             
