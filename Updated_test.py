@@ -344,3 +344,23 @@ radial_velocity(Cr, R)
 tangential_velocity(C_theta, R)  
 psi(Psi, R)
 plt.show()
+
+
+
+
+
+def stream_function_vs_radius_with_color(Psi, R, X):
+    plt.figure(figsize=(10, 6))
+    contour = plt.contourf(X, R, Psi, 50, cmap='viridis')  
+    plt.colorbar(contour, label="Stream Function (\u03A8)")
+    plt.title("Stream Function (\u03A8) Distribution")
+    plt.xlabel("Axial Position (X)")
+    plt.ylabel("Radial Position (R)")
+    plt.grid(True)
+
+    radial_positions = R[:, 0] 
+    stream_values = Psi[:, 0] 
+    plt.plot([X[0, 0]] * len(radial_positions), radial_positions)
+    plt.legend()
+    plt.show()
+stream_function_vs_radius_with_color(Psi, R, X)
