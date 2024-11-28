@@ -326,7 +326,8 @@ axial_velocity(Cx, R)
 radial_velocity(Cr, R)      
 tangential_velocity(C_theta, R)  
 psi(Psi, R)
-plt.show()
+
 
 # Call the function
 plot_stream_function(Psi, R)
+plt.show()
