@@ -19,7 +19,7 @@ delta_rC_theta_TE_hub = 82.3  # m^2/s
 delta_rC_theta_TE_tip = 84.4  # m^2/s
 
 incompressible = True
-iter_max = 500
+iter_max = 5
 N = num_stations
 M = num_stations
 LE = 5
@@ -94,6 +94,7 @@ def calculate_vorticity(Psi, rC_theta, R, T,  H0 , S):
             term3 = H0[j + 1, i] - H0[j - 1, i] 
             
             omega[j, i] = (np.pi / (Cx_inlet * (R[j,i]-R[j-1,i]))) * (((C_theta[j, i] / R[j, i]) *  term1) + T[j,i] * term2 - term3)
+            
     return omega
 
 def update_stream_function(Psi, rho, R, omega, dx):
@@ -191,21 +192,36 @@ def trace_thermodynamic_variables(Psi, H0_inlet, R, gamma, cp, R_gas):
     P02_rel = np.zeros_like(Psi)
 
     # Rothalpy constant
-    I = H0_inlet - N * R * C_theta
-    H0_rel = I - (N * R)**2/2
-    H01_rel = np.zeros_like(Psi)
+    I = H0 - rpm * rC_theta
+    H01 = H0
+    H02 = np.zeros_like(Psi)
+    H02_rel = np.zeros_like(Psi)
+    H0_rel = I + (rpm * R)**2/2
+    H01_rel = H0
     h = np.zeros_like(Psi)
     
     for i in range(1, N-1):  # Axial loop
+        
         for j in range(1, M - 1):  # Radial loop
             # Identify streamline origin
             a = (Psi[j, i] - Psi[j + 1, i - 1]) / (Psi[j, i - 1] - Psi[j + 1, i - 1])
             b = 1 - a
             
+
             # Enforce rothalpy conservation
-            H01_rel[j, i] = a * H0_rel[j , i - 1] + b * H0_rel[j + 1, i - 1]
-            H0_rel[j, i] = H01_rel[j, i] - (a * rpm * R[j - 1, i] + b * rpm * R[j - 1, i - 1])**2 / 2  + (rpm * R[j, i])**2 / 2
-            
+            #H0rel is onlydefined if both interpolationstations are within the blade
+            if (i > LE and i <= TE):
+                H01_rel[j, i] = a * H01_rel[j , i - 1] + b * H01_rel[j + 1, i - 1]
+
+                #Interpolate the Radius associated with the interpolated value of H01_rel and calculate H02_rel
+                H02_rel[j, i] = H01_rel[j, i] - (a * rpm * R[j - 1, i] + b * rpm * R[j - 1, i - 1])**2 / 2  + (rpm * R[j, i])**2 / 2
+                
+                
+
+            if i < LE or i > TE:
+                H01_rel[j, i] = H0_rel[j, i]
+                H02_rel[j, i] = H0_rel[j, i] + (rpm * R[j, i])**2 / 2
+
 
 
             # Calculate velocity components
@@ -213,10 +229,10 @@ def trace_thermodynamic_variables(Psi, H0_inlet, R, gamma, cp, R_gas):
             beta[j, i] = np.arctan(Cr[j, i] / Cx[j, i])
 
             # Update thermodynamic properties
-            h[j, i] = H0_rel[j, i] - 0.5 * (Cx[j, i]**2 + Cr[j, i]**2)
-            #H02 = H01 + rpm * rC_theta[j, i] - (rpm * a * rC_theta[j , i - 1] + b * rC_theta[j + 1, i - 1])
-
-            P01_rel[j, i] = p[j,i] * (H0_rel[j, i] / H0_inlet) ** (gamma / (gamma - 1))
+            #H02[j, i] = H01[j, i] + rpm * rC_theta[j, i] - (rpm * a * rC_theta[j , i - 1] + b * rC_theta[j + 1, i - 1])
+            #H02_rel[j, i] = I[j, i] + (rpm * R[j, i])**2 / 2
+            h[j, i] = H02_rel[j, i] - 0.5 * (Cm[j, i]**2 + C_theta[j, i]**2)
+            P01_rel[j, i] = p[j,i] * (H01_rel[j, i] / (I[j, i] + (rpm * rC_theta[j, i]))) ** (gamma / (gamma - 1))
             P02_rel[j, i] = P01_rel[j, i] * (H0_rel[j, i] / H01_rel[j, i]) ** (gamma / (gamma - 1))
 
             p[j, i] = P02_rel[j, i] - loss_factor[j, i] * (P02_rel[j, i] - p[j,i-1])
@@ -253,7 +269,7 @@ def check_convergence(Psi,tolerance, max_iterations=iter_max):
 Psi, rho, p, T, H0_inlet, H0, m_dot, S, loss_factor = initialize_variables()
 rC_theta = start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi)
 C_theta = rC_theta / R
-I = H0_inlet - N * R * C_theta
+
 
 # Run Simulation
 Psi, Cx, Cr, Cm, thermodynamic_results, omega = check_convergence(Psi, tolerance=1e-5)
@@ -262,11 +278,11 @@ Psi, Cx, Cr, Cm, thermodynamic_results, omega = check_convergence(Psi, tolerance
 # Assuming Psi and R are already defined from the simulation
 def plot_stream_function(Psi, R):
     plt.figure(figsize=(10, 6))
-    plt.contourf(Psi, levels=50, cmap='viridis')  # Use 'viridis' colormap for better visualization
-    plt.colorbar(label='Stream Function (Psi)')
-    plt.title("Stream Function Contour Plot")
-    plt.xlabel("Axial Direction")
-    plt.ylabel("Radial Direction")
+    plt.contourf(X, R, Psi, levels=50, cmap='viridis')  # Use sufficient levels
+    plt.colorbar(label='Streamfunction')
+    plt.xlabel('Axial Position')
+    plt.ylabel('Radial Position')
+    plt.title('Streamfunction Contours')
     plt.grid(alpha=0.3)
     plt.tight_layout()
     
@@ -408,14 +424,10 @@ def calculate_rotor_properties(data):
 
 results = calculate_rotor_properties(thermodynamic_results)
 
-
+plot_stream_function(Psi, R)
 blade_shape(X, R, rC_theta)  
 axial_velocity(Cx, R)        
 radial_velocity(Cr, R)      
 tangential_velocity(C_theta, R)  
 psi(Psi, R)
-
-
-# Call the function
-plot_stream_function(Psi, R)
 plt.show()
