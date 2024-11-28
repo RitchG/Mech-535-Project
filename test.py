@@ -14,10 +14,11 @@ P0_inlet = 1e5  # Pa
 Cp = 1005  # J/(kg*K)
 Cx_inlet = 136  # m/s
 alpha_inlet = np.deg2rad(30)  # radians
-
+rpm = 6000 * 2 * np.pi / 60  # rad/s
 delta_rC_theta_TE_hub = 82.3  # m^2/s
 delta_rC_theta_TE_tip = 84.4  # m^2/s
 
+incompressible = True
 iter_max = 500
 N = num_stations
 M = num_stations
@@ -54,6 +55,7 @@ def initialize_variables():
     return Psi, rho, p, T, H0_inlet, H0, m_dot, S, loss_factor
 
 
+
 # Swirl Distribution
 def start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi):
     # Initialize rC
@@ -82,7 +84,7 @@ def start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi):
 
 
 
-def calculate_vorticity(Psi, rC_theta, R, T, S, H0):
+def calculate_vorticity(Psi, rC_theta, R, T,  H0 , S):
     omega = np.zeros_like(Psi)
     for i in range(1, N):
         for j in range(1, M-1):
@@ -181,9 +183,10 @@ def trace_thermodynamic_variables(Psi, H0_inlet, R, gamma, cp, R_gas):
     """
     
     S = np.zeros_like(Psi)
+    S1 = np.zeros_like(Psi)
     beta = np.zeros_like(Psi)
     T = np.zeros_like(Psi)
-    p = np.zeros_like(Psi)
+    p = np.full_like(Psi, P0_inlet)
     P01_rel = np.zeros_like(Psi)
     P02_rel = np.zeros_like(Psi)
 
@@ -200,43 +203,52 @@ def trace_thermodynamic_variables(Psi, H0_inlet, R, gamma, cp, R_gas):
             b = 1 - a
             
             # Enforce rothalpy conservation
-            H01_rel[j, i] = a * H0_rel[j , i - 1] + b * H0_rel[j - 1, i - 1]
-            H0_rel[j, i] = H01_rel[j, i] - (a * N * R[j - 1, i] + b * N * R[j - 1, i - 1])**2 / 2  + (N * R[j, i])**2 / 2
+            H01_rel[j, i] = a * H0_rel[j , i - 1] + b * H0_rel[j + 1, i - 1]
+            H0_rel[j, i] = H01_rel[j, i] - (a * rpm * R[j - 1, i] + b * rpm * R[j - 1, i - 1])**2 / 2  + (rpm * R[j, i])**2 / 2
             
+
+
             # Calculate velocity components
             Cx, Cr, Cm = calculate_velocities(Psi, m_dot, R, rho)
             beta[j, i] = np.arctan(Cr[j, i] / Cx[j, i])
 
             # Update thermodynamic properties
             h[j, i] = H0_rel[j, i] - 0.5 * (Cx[j, i]**2 + Cr[j, i]**2)
-            T[j, i] = H0_rel[j, i] / cp
+            #H02 = H01 + rpm * rC_theta[j, i] - (rpm * a * rC_theta[j , i - 1] + b * rC_theta[j + 1, i - 1])
 
-            P01_rel[j, i] = P0_inlet * (H0_rel[j, i] / H0_inlet) ** (gamma / (gamma - 1))
+            P01_rel[j, i] = p[j,i] * (H0_rel[j, i] / H0_inlet) ** (gamma / (gamma - 1))
             P02_rel[j, i] = P01_rel[j, i] * (H0_rel[j, i] / H01_rel[j, i]) ** (gamma / (gamma - 1))
 
-            p[j, i] = P02_rel[j, i] - loss_factor[j, i] * (P02_rel[j, i] - P0_inlet)
-            rho[j, i] = p[j, i] / (R_gas * T[j, i])
+            p[j, i] = P02_rel[j, i] - loss_factor[j, i] * (P02_rel[j, i] - p[j,i-1])
+            
+            if incompressible == False:
+                T[j, i] = H0_rel[j, i] / cp
+                rho[j, i] = p[j, i] / (R_gas * T[j, i])
 
-            S[j, i] = cp * np.log(H0_rel[j, i] / H01_rel[j, i]) - R_gas * np.log(p[j, i] / P0_inlet)
-
+                S1[j, i] = a * S[j , i - 1] + b * S[j + 1, i - 1]
+                S[j, i] = S1[j,i] + cp * np.log(H0_rel[j, i] / H01_rel[j, i]) - R_gas * np.log(p[j, i] / p[j,i-1])
     return {"H0_rel": H0_rel, "Cx": Cx, "Cr": Cr, "beta": beta, "T": T, "p": p, "rho": rho, "S": S}
 
 # Convergence Check
 def check_convergence(Psi,tolerance, max_iterations=iter_max):
     for iteration in range(max_iterations):
         Psi_old = Psi.copy()
-        omega = calculate_vorticity(Psi, rC_theta, R, T, S, H0)
+        if iteration == 0:
+            S = np.zeros_like(Psi)
+            omega = calculate_vorticity(Psi, rC_theta, R, T, H0, S)
+        else:
+            omega = calculate_vorticity(Psi, rC_theta, R, T, H0, S)
         Psi = update_stream_function(Psi, rho, R, omega, dx=0.01)
         Cx, Cr, Cm = calculate_velocities(Psi, m_dot, R, rho)
         thermodynamic_results = trace_thermodynamic_variables(Psi, H0_inlet, R, gamma=1.4, cp=Cp, R_gas=R_gas)
-
+        S = thermodynamic_results["S"]
         if np.max(np.abs(Psi - Psi_old)) <= tolerance:
             print(f"Converged after {iteration + 1} iterations.")
             break
     else:
         print("Did not converge.")
 
-    return Psi, Cx, Cr, Cm, thermodynamic_results
+    return Psi, Cx, Cr, Cm, thermodynamic_results, omega
 
 Psi, rho, p, T, H0_inlet, H0, m_dot, S, loss_factor = initialize_variables()
 rC_theta = start_rotor(delta_rC_theta_TE_hub, delta_rC_theta_TE_tip, Psi)
@@ -244,11 +256,7 @@ C_theta = rC_theta / R
 I = H0_inlet - N * R * C_theta
 
 # Run Simulation
-Psi, Cx, Cr, Cm, thermodynamic_results = check_convergence(Psi, tolerance=1e-5)
-
-
-
-
+Psi, Cx, Cr, Cm, thermodynamic_results, omega = check_convergence(Psi, tolerance=1e-5)
 
 
 # Assuming Psi and R are already defined from the simulation
@@ -320,6 +328,86 @@ def psi(Psi, R):
     plt.legend()
     plt.grid(True)
     
+
+def calculate_rotor_properties(data):
+    """
+    Calculates and prints rotor performance properties at the hub, midspan, and tip.
+
+    Args:
+        data (dict): Dictionary containing 10x20 arrays for:
+            - "H0_rel": Relative total enthalpy.
+            - "Cx": Axial velocity.
+            - "Cr": Radial velocity.
+            - "beta": Blade angle (radians).
+            - "T": Temperature (K).
+            - "p": Static pressure (Pa).
+            - "rho": Density (kg/m^3).
+            - "S": Entropy (J/kg.K).
+    """
+    radial_indices = [0, M // 2, M - 1]
+    locations = ["Hub", "Midspan", "Tip"]
+
+    results = {}
+
+    for r_idx, loc in zip(radial_indices, locations):
+        # Extract relevant values
+        beta_LE = data["beta"][r_idx, LE]
+        beta_TE = data["beta"][r_idx, TE]
+        Cx_LE = data["Cx"][r_idx, LE]
+        Cx_TE = data["Cx"][r_idx, TE]
+        Cr_LE = data["Cr"][r_idx, LE]
+        Cr_TE = data["Cr"][r_idx, TE]
+        p_LE = data["p"][r_idx, LE]
+        p_TE = data["p"][r_idx, TE]
+        rho_LE = data["rho"][r_idx, LE]
+        rho_TE = data["rho"][r_idx, TE]
+        H0_rel_LE = data["H0_rel"][r_idx, LE]
+        H0_rel_TE = data["H0_rel"][r_idx, TE]
+
+        # Trailing Edge Radial Velocity
+        Cr_TE_val = Cr_TE
+
+        # Leading Edge Incidence
+        incidence = np.rad2deg(beta_LE - np.arctan(Cr_LE / Cx_LE))
+
+        # Turning (Deflection)
+        deflection = np.rad2deg(beta_LE - beta_TE)
+
+        # Static Pressure Rise
+        delta_p = p_TE - p_LE
+
+        # Total Pressure Rise
+        C_TE = np.sqrt(Cx_TE**2 + Cr_TE**2)
+        C_LE = np.sqrt(Cx_LE**2 + Cr_LE**2)
+        total_pressure_rise = 0.5 * rho_TE * C_TE**2 - 0.5 * rho_LE * C_LE**2
+
+        # Reaction
+        static_enthalpy_TE = H0_rel_TE - 0.5 * C_TE**2
+        reaction = static_enthalpy_TE / H0_rel_TE
+
+        power_absorbed = m_dot * omega[r_idx,TE] * R[r_idx, TE] * (Cx_TE * np.tan(beta_TE) - Cx_LE * np.tan(beta_LE))
+
+        # Store results
+        results[loc] = {
+            "Radial Velocity (Cr_TE)": Cr_TE_val,
+            "Incidence (deg)": incidence,
+            "Turning (Deflection, deg)": deflection,
+            "Static Pressure Rise (Pa)": delta_p,
+            "Total Pressure Rise (Pa)": total_pressure_rise,
+            "Reaction": reaction,
+            "Power Absorbed (W)": power_absorbed,
+        }
+
+    # Print results for each location
+    for loc, props in results.items():
+        print(f"\n{loc}:")
+        for key, value in props.items():
+            print(f"  {key}: {value:.2f}")
+
+    return results
+
+results = calculate_rotor_properties(thermodynamic_results)
+
 
 blade_shape(X, R, rC_theta)  
 axial_velocity(Cx, R)        
