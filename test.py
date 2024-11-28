@@ -18,15 +18,18 @@ alpha_inlet = np.deg2rad(30)  # radians
 delta_rC_theta_TE_hub = 82.3  # m^2/s
 delta_rC_theta_TE_tip = 84.4  # m^2/s
 
-iter_max = 400
-N = 3 * num_stations
+iter_max = 500
+N = num_stations
 M = num_stations
-LE = num_stations
-TE = LE + num_stations
+LE = 5
+TE = LE + N
 
 # Grid Generation
 def generate_grid():
-    x = np.linspace(-1.5, 1.5, N)
+    x1 = np.linspace(-0.55, -0.05, LE)
+    x2 = np.linspace(-0.05, 0.05, N)
+    x3 = np.linspace(-0.05, 0.55, 5)
+    x = np.concatenate((x1, x2, x3))
     r = np.linspace(r_hub, r_tip, M)
     return np.meshgrid(x, r)
 
@@ -205,14 +208,14 @@ def trace_thermodynamic_variables(Psi, H0_inlet, R, gamma, cp, R_gas):
             beta[j, i] = np.arctan(Cr[j, i] / Cx[j, i])
 
             # Update thermodynamic properties
-            #h[j, i] = H0_rel[j, i] - 0.5 * (Cx[j, i]**2 + Cr[j, i]**2)
-            #T[j, i] = H0_rel[j, i] / cp
+            h[j, i] = H0_rel[j, i] - 0.5 * (Cx[j, i]**2 + Cr[j, i]**2)
+            T[j, i] = H0_rel[j, i] / cp
 
             P01_rel[j, i] = P0_inlet * (H0_rel[j, i] / H0_inlet) ** (gamma / (gamma - 1))
             P02_rel[j, i] = P01_rel[j, i] * (H0_rel[j, i] / H01_rel[j, i]) ** (gamma / (gamma - 1))
 
             p[j, i] = P02_rel[j, i] - loss_factor[j, i] * (P02_rel[j, i] - P0_inlet)
-            #rho[j, i] = p[j, i] / (R_gas * T[j, i])
+            rho[j, i] = p[j, i] / (R_gas * T[j, i])
 
             S[j, i] = cp * np.log(H0_rel[j, i] / H01_rel[j, i]) - R_gas * np.log(p[j, i] / P0_inlet)
 
