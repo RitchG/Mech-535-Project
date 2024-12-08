@@ -19,7 +19,7 @@ delta_rC_theta_TE_hub = 82.3  # m^2/s
 delta_rC_theta_TE_tip = 84.4  # m^2/s
 
 incompressible = True
-iter_max = 5
+iter_max = 1000
 N = num_stations
 M = num_stations
 LE = 5
